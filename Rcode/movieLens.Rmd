@@ -1,0 +1,92 @@
+---
+title: "movieLens"
+author: "Kennedy Johnson"
+date: "2024-10-03"
+output: html_document
+---
+
+# Collaborative Filtering
+
+## Load Data
+
+```{r, message= F}
+library(recommenderlab)
+movies = read.csv("../ml-32m/movies.csv")
+ratings = read.csv("../ml-32m/ratings.csv")
+links = read.csv("../ml-32m/links.csv")
+tags = read.csv("../ml-32m/tags.csv")
+```
+
+## Code Sourced from IE 5533
+
+```{r}
+ratingsMatrix = as(ratings, "realRatingMatrix")
+
+# Only consider users that have rated at least 100 movies
+MovieLense100 <- ratingsMatrix[rowCounts(ratingsMatrix)>100,]
+
+# Sample 1,000 random row indices from the matrix
+n_samples = 1000
+MovieLense100Sample <- MovieLense100[sample(1:nrow(MovieLense100), n_samples, replace = FALSE),]
+```
+
+```{r}
+split <- sample(c("TRUE", "FALSE"),
+                prob = c(0.8, 0.2),
+                size = nrow(MovieLense100Sample),
+                replace="TRUE")
+
+train <- subset(MovieLense100Sample, split == "TRUE")
+test  <- subset(MovieLense100Sample, split == "FALSE")
+
+```
+
+```{r}
+# User-Based Collaborative Filtering
+rec_system <- Recommender(data = train,
+                          method = "UBCF")
+
+# predict top-3 (n = 3) items for each user in test data
+recommendations <- predict(rec_system,
+                           newdata = test,
+                           n = 3)
+
+recommendations
+
+# predict ratings for all unknown items in test set
+rating_predictions <- predict(rec_system,
+                              newdata = test,
+                              type = "ratings")
+
+# Evaluation via Cross Validation against Benchmarks
+
+scheme <- evaluationScheme(MovieLense100Sample,
+                           method = "cross-validation",
+                           k = 50,
+                           given = 15,
+                           goodRating = 4)
+
+scheme
+
+
+algorithms <- list(`random items` = list(name = "RANDOM", param = NULL),
+                   `popular items` = list(name = "POPULAR", param = NULL),
+                   `user-based CF` = list(name = "UBCF", param = list(nn = 3)))
+
+
+results <- evaluate(scheme,
+                    algorithms,
+                    type = "topNList",
+                    n = c(1, 3, 5, 10, 20),
+                    progress = FALSE)
+
+plot(results, annotate = 2, legend = "topleft")
+plot(results, "prec/rec", annotate=3, legend="topleft")
+
+res <- evaluate(scheme,
+                algorithms,
+                type = "ratings",
+                progress = FALSE)
+
+plot(res, col = 1:length(algorithms))
+```

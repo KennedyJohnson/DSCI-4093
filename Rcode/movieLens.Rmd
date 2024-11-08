@@ -5,8 +5,6 @@ date: "2024-10-03"
 output: html_document
 ---
 
-# Collaborative Filtering
-
 ## Load Data
 
 ```{r, message= F}
@@ -17,76 +15,114 @@ links = read.csv("../ml-32m/links.csv")
 tags = read.csv("../ml-32m/tags.csv")
 ```
 
-## Code Sourced from IE 5533
+# Subset data to only users with many ratings
 
 ```{r}
+set.seed(4093)
 ratingsMatrix = as(ratings, "realRatingMatrix")
 
 # Only consider users that have rated at least 100 movies
-MovieLense100 <- ratingsMatrix[rowCounts(ratingsMatrix)>100,]
+MovieLense100 <- ratingsMatrix[rowCounts(ratingsMatrix) > 100, colCounts(ratingsMatrix) > 50]
 
-# Sample 1,000 random row indices from the matrix
-n_samples = 1000
+# Sample random row indices from the matrix
+n_samples = 500
 MovieLense100Sample <- MovieLense100[sample(1:nrow(MovieLense100), n_samples, replace = FALSE),]
+MovieLense100Sample
 ```
 
+# Predict 5 movies to a user
+
 ```{r}
-split <- sample(c("TRUE", "FALSE"),
-                prob = c(0.8, 0.2),
-                size = nrow(MovieLense100Sample),
-                replace="TRUE")
+trainSet <- MovieLense100Sample[1:300]
+rec <- Recommender(trainSet, method = "UBCF")
+rec
+pre <- predict(rec, MovieLense100[301:302], n = 5)
 
-train <- subset(MovieLense100Sample, split == "TRUE")
-test  <- subset(MovieLense100Sample, split == "FALSE")
-
+movies[as.integer(as(pre,"list")[1]$`0`),]["title"]
+movies[as.integer(as(pre,"list")[2]$`1`),]["title"]
 ```
 
+# Make ROC curve from various recommender methods
+
+Code Sourced from IE 5533
+
 ```{r}
-# User-Based Collaborative Filtering
-rec_system <- Recommender(data = train,
-                          method = "UBCF")
+# Evaluation via Cross Validation against Benchmarks with k = 50 fold validation
 
-# predict top-3 (n = 3) items for each user in test data
-recommendations <- predict(rec_system,
-                           newdata = test,
-                           n = 3)
-
-recommendations
-
-# predict ratings for all unknown items in test set
-rating_predictions <- predict(rec_system,
-                              newdata = test,
-                              type = "ratings")
-
-# Evaluation via Cross Validation against Benchmarks
-
-scheme <- evaluationScheme(MovieLense100Sample,
-                           method = "cross-validation",
-                           k = 50,
-                           given = 15,
-                           goodRating = 4)
+scheme <- evaluationScheme(MovieLense100Sample,method = "cross-validation",k = 10,given = 15,goodRating = 3)
 
 scheme
 
 
 algorithms <- list(`random items` = list(name = "RANDOM", param = NULL),
                    `popular items` = list(name = "POPULAR", param = NULL),
-                   `user-based CF` = list(name = "UBCF", param = list(nn = 3)))
+                   `user-based CF` = list(name = "UBCF", param = list(nn = 3)), # use the 3 closest users
+                   `item-based CF` = list(name = "IBCF"))
 
 
 results <- evaluate(scheme,
                     algorithms,
                     type = "topNList",
-                    n = c(1, 3, 5, 10, 20),
+                    n = c(1, 3, 5, 10, 20, 50), # top 1, 3,5,10,20,50 recommendations for movies
                     progress = FALSE)
+
 
 plot(results, annotate = 2, legend = "topleft")
 plot(results, "prec/rec", annotate=3, legend="topleft")
+```
 
-res <- evaluate(scheme,
-                algorithms,
-                type = "ratings",
-                progress = FALSE)
 
-plot(res, col = 1:length(algorithms))
+## RMSE measure
+
+```{r}
+set.seed(4093) # set seed for reproducibility 
+
+ratingsMatrix <- as(ratings, "realRatingMatrix") # turn into type realRatingMatrix for use in recommenderlab, already normalized
+ratingsMatrix <- ratingsMatrix[rowCounts(ratingsMatrix) > 100, colCounts(ratingsMatrix) > 50]
+# filter out movies with less than 50 ratings for IBCF to work, only use users with >100 ratings
+
+# Filter users with more than 100 ratings, then sample
+MovieLense100 <- ratingsMatrix[rowCounts(ratingsMatrix) > 100,]
+MovieLense100Sample <- MovieLense100[sample(1:nrow(MovieLense100), 1000,replace =F),]
+
+# Set up a 5-fold cross-validation scheme
+scheme <- evaluationScheme(MovieLense100Sample, method = "cross-validation", k = 5, given = 10, goodRating = 3)
+#given parameter in evaluationScheme, which specifies the number of ratings to keep per user in the training set.
+# goodrating - threshold at which ratings are considered good for evaluation. E.g., with goodRating=3 all items with actual user rating of greater or equal 3 are considered positives in the evaluation process.
+# 5-fold CV
+
+# Train a recommender model (user-based collaborative filtering, popular, IBCF, random)
+rec_model <- Recommender(getData(scheme, "train"), method = "UBCF") # recommend movies that users with similar watch ratings liked
+rec_model_pop <- Recommender(getData(scheme, "train"), method = "POPULAR") # recommend most popular movie
+rec_model_item <- Recommender(getData(scheme, "train"), method = "IBCF") # take a long time to run
+rec_model_random <- Recommender(getData(scheme, "train"), method = "RANDOM") # recommend a random movie
+
+# Predict ratings for the test set
+predictions <- predict(rec_model, getData(scheme, "known"), type = "ratings")
+predictions1 <- predict(rec_model_pop, getData(scheme, "known"), type = "ratings")
+predictions2 <- predict(rec_model_item, getData(scheme, "known"), type = "ratings")
+predictions3 <- predict(rec_model_random, getData(scheme, "known"), type = "ratings")
+
+# Calculate accuracy metrics on the unknown ratings in the test set
+accuracy <- calcPredictionAccuracy(predictions, getData(scheme, "unknown"))
+accuracy1 <- calcPredictionAccuracy(predictions1, getData(scheme, "unknown"))
+accuracy2 <- calcPredictionAccuracy(predictions2, getData(scheme, "unknown"))
+accuracy3 <- calcPredictionAccuracy(predictions3, getData(scheme, "unknown"))
+
+# Print RMSE
+algos = c("UBCF","POPULAR","IBCF","RANDOM")
+RMSE = c(accuracy["RMSE"],accuracy1["RMSE"],accuracy2["RMSE"],accuracy3["RMSE"])
+MSE = c(accuracy["MSE"],accuracy1["MSE"],accuracy2["MSE"],accuracy3["MSE"])
+MAE = c(accuracy["MAE"],accuracy1["MAE"],accuracy2["MAE"],accuracy3["MAE"])
+cbind(algos,RMSE,MSE,MAE)
+
+# use MSE, MAE, RMSE? 
+
+# MAE: Use MAE when you want a metric that treats all errors equally, making it useful when all errors should contribute equally to the metric.
+# RMSE: Use RMSE when larger errors should be penalized more, such as when larger deviations are considered worse for the model. RMSE can be preferable in contexts where outliers represent a significant problem or when the impact of large errors should be minimized.
+
+# accuracy["MSE"]
+# accuracy["MAE"]
+# accuracy["RMSE"]
+# cat("RMSE:", accuracy["RMSE"], "\n")
 ```

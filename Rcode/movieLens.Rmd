@@ -25,7 +25,7 @@ ratingsMatrix = as(ratings, "realRatingMatrix")
 MovieLense100 <- ratingsMatrix[rowCounts(ratingsMatrix) > 100, colCounts(ratingsMatrix) > 50]
 
 # Sample random row indices from the matrix
-n_samples = 500
+n_samples = 100
 MovieLense100Sample <- MovieLense100[sample(1:nrow(MovieLense100), n_samples, replace = FALSE),]
 MovieLense100Sample
 ```
@@ -125,4 +125,5 @@ cbind(algos,RMSE,MSE,MAE)
 # accuracy["MAE"]
 # accuracy["RMSE"]
 # cat("RMSE:", accuracy["RMSE"], "\n")
+
 ```
